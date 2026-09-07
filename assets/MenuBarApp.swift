@@ -87,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.refresh()
             self?.deliverQueuedNotifications()
+            self?.showUpdateResultIfReady()
         }
         deliverQueuedNotifications()
     }
@@ -144,6 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         addAction("Details…", action: #selector(showDetails))
         addAction("Copy full status", action: #selector(copyStatus))
         addAction("Open guard log", action: #selector(openLog))
+        addUpdateItems()
         menu.addItem(.separator())
         addSettings()
         addAction("Quit Status Icon", action: #selector(quit))
@@ -159,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         addAction("Details…", action: #selector(showDetails))
         addAction("Copy full status", action: #selector(copyStatus))
         addAction("Open guard log", action: #selector(openLog))
+        addUpdateItems()
         menu.addItem(.separator())
         addSettings()
         addAction("Quit Status Icon", action: #selector(quit))
@@ -298,6 +301,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private func showError(_ error: Error) {
         NSApp.activate(ignoringOtherApps: true)
         NSAlert(error: error).runModal()
+    }
+
+    @objc private func openUpdater() {
+        do {
+            _ = try runGuard(["update-background"])
+            refresh()
+        } catch { showError(error) }
+    }
+
+    private func addUpdateItems() {
+        let data = try? Data(contentsOf: cacheDirectory.appendingPathComponent("update-status.json"))
+        let state = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let stale = Date().timeIntervalSince1970 - (state?["updated_at"] as? Double ?? 0) > 600
+        let busy = state?["busy"] as? Bool == true && !stale
+        addAction("Update…", action: #selector(openUpdater))
+        menu.items.last?.isEnabled = !busy
+    }
+
+    private func showUpdateResultIfReady() {
+        guard FileManager.default.fileExists(atPath: cacheDirectory.appendingPathComponent("update-popup.pending").path),
+              let result = try? runGuard(["update-result"]),
+              let state = try? JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any],
+              let message = state["message"] as? String else { return }
+        let alert = NSAlert()
+        alert.messageText = message
+        let detail = state["error"] as? String ?? ""
+        alert.alertStyle = detail.isEmpty ? .informational : .warning
+        alert.informativeText = detail.isEmpty ? "qbt-proton-guard is ready." : detail
+        menu.cancelTracking()
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     @objc private func openLog() {

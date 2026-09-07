@@ -40,7 +40,11 @@ Linux currently requires the official Proton VPN application using NetworkManage
 
 ## Build and install
 
-Requirements: Go 1.24 or newer and an existing qBittorrent configuration. Start and quit qBittorrent once if it has never run.
+Requirements: an existing qBittorrent configuration, and Go 1.24 or newer when building from source. Start and quit qBittorrent once if it has never run. macOS installation and updates also require Apple's Command Line Tools (`xcode-select --install`) to build the native menu bar app.
+
+Prebuilt executables for macOS, Linux, and Windows (Intel/AMD and ARM64) are available on the [latest release page](https://github.com/selimsandal/qbt-proton-guard/releases/latest). Download your platform's executable and `SHA256SUMS` from the same release. Verify the executable's SHA-256 against that file (`shasum -a 256 FILE` on macOS, `sha256sum FILE` on Linux, or `Get-FileHash FILE -Algorithm SHA256` in PowerShell), then run the downloaded executable with `install`. On macOS/Linux, first make it executable with `chmod +x FILE`.
+
+To build from source:
 
 ```sh
 go build -o qbt-proton-guard ./cmd/qbt-proton-guard
@@ -72,6 +76,27 @@ qbt-proton-guard uninstall
 
 Uninstalling intentionally leaves qBittorrent's last safe interface binding in place.
 
+## Updates and automatic releases
+
+Choose **Update…** from the menu bar or system tray to update silently in the background—no terminal opens. The action is disabled while busy, and a one-time popup reports completion or failure instead of leaving result text in the menu. The result survives the status app's restart and isn't replayed at future logins. These user-requested responses aren't muted by the ordinary notification setting (Linux uses the desktop notification service). Detailed diagnostics are saved to `qbt-proton-guard/update.log` in the user's cache directory. You can still update directly:
+
+```sh
+qbt-proton-guard update --check  # Check only; changes nothing
+qbt-proton-guard update          # Download, verify, and install the latest release
+```
+
+If the command isn't on your PATH, use `~/.local/bin/qbt-proton-guard` on macOS/Linux. In PowerShell, use `& "$env:LOCALAPPDATA\qbt-proton-guard\qbt-proton-guard.exe" update`.
+
+The updater downloads only assets from this repository's latest GitHub release, verifies the signed checksum manifest and the executable's SHA-256 before executing anything, and reuses the staged installer and its rollback behavior. Preferences are preserved. Releases older than your installed release timestamp are not installed. On Windows the installer continues after the update command exits, so it can replace the CLI executable; a popup reports completion, or check `version` afterwards. Network or verification failures leave the installation untouched. Updates run only when explicitly requested; there are no scheduled automatic checks or installations.
+
+Every push to `main` that passes tests on macOS, Linux, and Windows publishes a release with all seven binaries, signed checksums, and generated release notes: macOS and Windows on AMD64/ARM64, and Linux on AMD64/ARM64/RISC-V 64 (`riscv64`). The updater selects the matching architecture automatically. Pull requests and other branches only run tests. Versions use Harness's `0.0.<epoch>-g<commit>` format, with the commit's UTC epoch and seven-character SHA so reruns have the same identity. Published releases aren't overwritten. Only the current `main` tip is promoted to Latest. Source builds report `dev`; release builds embed the generated version in the CLI and macOS app metadata.
+
+### Update authenticity
+
+HTTPS certificate and hostname verification remain enabled. Requests and redirects are restricted to exact GitHub API, GitHub, and GitHub release-storage hostnames; HTTP downgrades, lookalike domains, URL credentials, and nonstandard ports are rejected. An Ed25519 public key embedded in the installed app verifies `SHA256SUMS.sig` before trusting any checksum. The signed payload is `qbt-proton-guard-release\n<tag>\n` followed by the exact `SHA256SUMS` bytes, binding hashes to a release identity. Missing/forged signatures, modified checksums, relabelled releases, and altered binaries are rejected before execution—even if an attacker can replace HTTPS responses through a locally trusted interception proxy. Attackers can still block updates; compromise of the signing key or the local installed app is outside this protection.
+
+Release maintainers must configure the repository Actions secret **RELEASE_SIGNING_KEY** with the Ed25519 private-key PEM corresponding to `internal/selfupdate/release-public-key.pem`. Publication fails if the secret is absent or doesn't match. Keep the private key outside the repository and back it up securely; never include it in release assets. A first installation still requires a trusted source for the initial executable/public key.
+
 ## Commands
 
 ```text
@@ -83,6 +108,7 @@ qbt-proton-guard ui                      Open the status icon (Linux/Windows)
 qbt-proton-guard icon-login status|on|off Show or change icon login behavior
 qbt-proton-guard install                 Install and start at login
 qbt-proton-guard uninstall               Remove the login service
+qbt-proton-guard update [--check]         Install or check the latest release
 qbt-proton-guard version                 Print the version
 ```
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/selimsandal/qbt-proton-guard/assets"
+	"github.com/selimsandal/qbt-proton-guard/internal/buildinfo"
 )
 
 const serviceLabel = "com.qbt-proton-guard.agent"
@@ -345,7 +346,11 @@ func installNotifier(app string) error {
 	if err := buildAppIcon(temp, resources); err != nil {
 		return err
 	}
-	info := `<?xml version="1.0" encoding="UTF-8"?>
+	bundleVersion := strings.Split(buildinfo.Version, "-")[0]
+	if bundleVersion == "dev" {
+		bundleVersion = "0.0.0"
+	}
+	info := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleExecutable</key><string>qbt-proton-guard</string>
@@ -354,11 +359,12 @@ func installNotifier(app string) error {
   <key>CFBundleDisplayName</key><string>qbt-proton-guard</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.4.0</string>
+  <key>CFBundleShortVersionString</key><string>%s</string>
+  <key>QBTGuardRelease</key><string>%s</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
 </dict></plist>
-`
+`, html.EscapeString(bundleVersion), html.EscapeString(buildinfo.Version))
 	if err := os.WriteFile(filepath.Join(app, "Contents", "Info.plist"), []byte(info), 0o644); err != nil {
 		return err
 	}

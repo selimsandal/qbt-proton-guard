@@ -16,6 +16,7 @@ import (
 	"github.com/godbus/dbus/v5"
 	"github.com/selimsandal/qbt-proton-guard/internal/guard"
 	"github.com/selimsandal/qbt-proton-guard/internal/notify"
+	"github.com/selimsandal/qbt-proton-guard/internal/selfupdate"
 	"golang.org/x/sys/unix"
 )
 
@@ -64,17 +65,21 @@ func Run(ctx context.Context) error {
 	serviceRow, _ := item.Menu().AddChild(tray.MenuItemLabel("Guard: Checking"))
 	portRow, _ := item.Menu().AddChild(tray.MenuItemLabel("Forwarded port: Checking"))
 	_, _ = item.Menu().AddChild(tray.MenuItemType(tray.Separator))
+	var updateItem *tray.MenuItem
 	for _, action := range []struct {
 		label string
 		run   func() error
-	}{{"Details…", openLinuxDetails}, {"Copy full status", copyLinuxDetails}} {
-		_, _ = item.Menu().AddChild(tray.MenuItemLabel(action.label), tray.MenuItemHandler(tray.ClickedHandler(func(any, uint32) error {
+	}{{"Details…", openLinuxDetails}, {"Copy full status", copyLinuxDetails}, {"Update…", selfupdate.StartBackground}} {
+		actionItem, _ := item.Menu().AddChild(tray.MenuItemLabel(action.label), tray.MenuItemHandler(tray.ClickedHandler(func(any, uint32) error {
 			if err := action.run(); err != nil {
 				log.Printf("%s: %v", action.label, err)
 				return err
 			}
 			return nil
 		})))
+		if action.label == "Update…" {
+			updateItem = actionItem
+		}
 	}
 	_, _ = item.Menu().AddChild(tray.MenuItemType(tray.Separator))
 	// Menu callbacks run separately from the refresh loop; serialize the toggle here.
@@ -145,11 +150,14 @@ func Run(ctx context.Context) error {
 		_ = vpnRow.SetProps(tray.MenuItemLabel(lines[1]))
 		_ = serviceRow.SetProps(tray.MenuItemLabel(lines[2]))
 		_ = portRow.SetProps(tray.MenuItemLabel(lines[3]))
+		updateStatus := selfupdate.ReadStatus()
+		_ = updateItem.SetProps(tray.MenuItemEnabled(!updateStatus.Busy))
 		trayStatus := tray.Active
 		if needsAttention(state, err, now) {
 			trayStatus = tray.NeedsAttention
 		}
 		_ = item.SetProps(tray.ItemStatus(trayStatus), tray.ItemToolTip("qbt-proton-guard", []image.Image{icon}, "qbt-proton-guard", strings.Join(lines, "\n")))
+		deliverLinuxUpdateResult(ctx, connection)
 		deliverLinuxNotifications(ctx, connection, notifications)
 		select {
 		case <-ctx.Done():
@@ -187,6 +195,29 @@ func Run(ctx context.Context) error {
 			_ = notificationSetting.SetProps(tray.MenuItemToggleState(map[bool]tray.MenuToggleState{true: tray.On, false: tray.Off}[notifications]))
 		case <-ticker.C:
 		}
+	}
+}
+
+func deliverLinuxUpdateResult(ctx context.Context, connection *dbus.Conn) {
+	if connection == nil {
+		return
+	}
+	result, ok := selfupdate.TakeResult()
+	if !ok {
+		return
+	}
+	body := result.Error
+	if body == "" {
+		body = "qbt-proton-guard is ready."
+	}
+	var id uint32
+	err := connection.Object("org.freedesktop.Notifications", "/org/freedesktop/Notifications").CallWithContext(
+		ctx, "org.freedesktop.Notifications.Notify", 0,
+		"qbt-proton-guard", uint32(0), "qbt-proton-guard", result.Message,
+		body, []string{}, map[string]dbus.Variant{}, int32(-1),
+	).Store(&id)
+	if err != nil {
+		log.Printf("deliver update result notification: %v", err)
 	}
 }
 

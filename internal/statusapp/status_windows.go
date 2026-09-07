@@ -16,6 +16,7 @@ import (
 
 	"github.com/selimsandal/qbt-proton-guard/internal/guard"
 	"github.com/selimsandal/qbt-proton-guard/internal/notify"
+	"github.com/selimsandal/qbt-proton-guard/internal/selfupdate"
 	"golang.org/x/sys/windows"
 )
 
@@ -51,6 +52,7 @@ const (
 	cmdLogin         = 103
 	cmdDetails       = 104
 	cmdCopy          = 105
+	cmdUpdate        = 106
 )
 
 var (
@@ -124,6 +126,7 @@ type trayApp struct {
 	notifications bool
 	state         guard.RuntimeState
 	stateErr      error
+	updateStatus  selfupdate.Status
 }
 
 var activeApp *trayApp
@@ -200,6 +203,10 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		case wmCommand:
 			if uint16(wParam) == cmdQuit {
 				procDestroyWindow.Call(hwnd)
+			} else if uint16(wParam) == cmdUpdate {
+				if err := selfupdate.StartBackground(); err != nil {
+					activeApp.showText("Could not start updater", err.Error())
+				}
 			} else if uint16(wParam) == cmdDetails {
 				activeApp.showText("qbt-proton-guard Details", FullStatus(activeApp.state, activeApp.stateErr, time.Now()))
 			} else if uint16(wParam) == cmdCopy {
@@ -245,7 +252,15 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 
 func (app *trayApp) refresh() {
 	app.state, app.stateErr = guard.ReadRuntimeState()
+	app.updateStatus = selfupdate.ReadStatus()
 	app.updateTray(nimModify, "")
+	if result, ok := selfupdate.TakeResult(); ok {
+		text := result.Error
+		if text == "" {
+			text = "qbt-proton-guard is ready."
+		}
+		app.showText(result.Message, text)
+	}
 	pending, _ := notify.ListPending()
 	for _, notification := range pending {
 		if app.notifications {
@@ -292,8 +307,13 @@ func (app *trayApp) showMenu() {
 	appendMenu(menu, mfSeparator, 0, "")
 	appendMenu(menu, mfString, cmdDetails, "Details…")
 	appendMenu(menu, mfString, cmdCopy, "Copy full status")
-	appendMenu(menu, mfSeparator, 0, "")
 	flags := uintptr(mfString)
+	if app.updateStatus.Busy {
+		flags |= mfGray
+	}
+	appendMenu(menu, flags, cmdUpdate, "Update…")
+	appendMenu(menu, mfSeparator, 0, "")
+	flags = mfString
 	if app.colored {
 		flags |= mfChecked
 	}

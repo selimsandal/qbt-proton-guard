@@ -20,3 +20,60 @@ jobs:
           go-version: "1.24.x"
       - run: go test ./...
       - run: go vet ./...
+
+  release:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.24.x"
+      - name: Build release artifacts
+        run: scripts/release-build.sh build/release
+      - name: Sign release checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          : "${RELEASE_SIGNING_KEY:?Configure the Ed25519 RELEASE_SIGNING_KEY repository secret before releasing}"
+          umask 077
+          key="$(mktemp)"
+          payload="$(mktemp)"
+          trap 'rm -f "$key" "$payload"' EXIT
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key"
+          identity="$(build/release/qbt-proton-guard-linux-amd64 version)"
+          { printf 'qbt-proton-guard-release\nv%s\n' "$identity"; cat build/release/SHA256SUMS; } > "$payload"
+          openssl pkeyutl -sign -rawin -inkey "$key" -in "$payload" -out build/release/SHA256SUMS.sig
+          openssl pkeyutl -verify -rawin -pubin -inkey internal/selfupdate/release-public-key.pem -in "$payload" -sigfile build/release/SHA256SUMS.sig
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          identity="$(build/release/qbt-proton-guard-linux-amd64 version)"
+          tag="v${identity}"
+
+          if state="$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [[ "$state" == "false" ]]; then
+              echo "Release $tag is already published; leaving it unchanged."
+              exit 0
+            fi
+          else
+            gh release create "$tag" --target "$RELEASE_SHA" --title "$tag" --draft --generate-notes
+          fi
+
+          gh release upload "$tag" build/release/* --clobber
+
+          git fetch --no-tags origin main
+          latest=false
+          if [[ "$(git rev-parse origin/main)" == "$RELEASE_SHA" ]]; then
+            latest=true
+          fi
+          gh release edit "$tag" --draft=false --latest="$latest"

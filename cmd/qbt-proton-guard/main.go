@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,13 +12,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/selimsandal/qbt-proton-guard/internal/buildinfo"
 	"github.com/selimsandal/qbt-proton-guard/internal/guard"
 	"github.com/selimsandal/qbt-proton-guard/internal/proton"
 	"github.com/selimsandal/qbt-proton-guard/internal/qbittorrent"
+	"github.com/selimsandal/qbt-proton-guard/internal/selfupdate"
 	"github.com/selimsandal/qbt-proton-guard/internal/statusapp"
 )
-
-const version = "0.4.0"
 
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
@@ -60,12 +61,40 @@ func main() {
 		if err := guard.Install(); err != nil {
 			log.Fatal(err)
 		}
+	case "install-update":
+		err := guard.Install()
+		selfupdate.Finish(err)
+		if err != nil {
+			log.Fatal(err)
+		}
+	case "update-background":
+		if err := selfupdate.StartBackground(); err != nil {
+			log.Fatal(err)
+		}
+	case "update-result":
+		if result, ok := selfupdate.TakeResult(); ok {
+			if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+				log.Fatal(err)
+			}
+		}
 	case "uninstall":
 		if err := guard.Uninstall(); err != nil {
 			log.Fatal(err)
 		}
+	case "update":
+		flags := flag.NewFlagSet("update", flag.ExitOnError)
+		check := flags.Bool("check", false, "check for updates without installing")
+		_ = flags.Parse(os.Args[2:])
+		if flags.NArg() != 0 {
+			log.Fatal("usage: qbt-proton-guard update [--check]")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := selfupdate.Run(ctx, buildinfo.Version, *check); err != nil {
+			log.Fatal(err)
+		}
 	case "version", "--version", "-v":
-		fmt.Println(version)
+		fmt.Println(buildinfo.Version)
 	case "help", "--help", "-h":
 		usage()
 	default:
@@ -183,5 +212,6 @@ Usage:
   qbt-proton-guard icon-login status|on|off Show or change icon login behavior
   qbt-proton-guard install                 Install and start the user service
   qbt-proton-guard uninstall               Remove the user service
+  qbt-proton-guard update [--check]         Install or check the latest release
   qbt-proton-guard version                 Print the version`)
 }
