@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -32,8 +33,29 @@ func main() {
 		once()
 	case "status":
 		status()
+	case "details":
+		state, err := guard.ReadRuntimeState()
+		fmt.Println(statusapp.FullStatus(state, err, time.Now()))
 	case "ui":
 		runUI()
+	case "icon-login":
+		if len(os.Args) != 3 {
+			log.Fatal("usage: qbt-proton-guard icon-login status|on|off")
+		}
+		switch os.Args[2] {
+		case "status":
+			enabled, err := guard.StatusAtLogin()
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Println(enabled)
+		case "on", "off":
+			if err := guard.SetStatusAtLogin(os.Args[2] == "on"); err != nil {
+				log.Fatal(err)
+			}
+		default:
+			log.Fatal("usage: qbt-proton-guard icon-login status|on|off")
+		}
 	case "install":
 		if err := guard.Install(); err != nil {
 			log.Fatal(err)
@@ -119,8 +141,10 @@ func status() {
 			fmt.Println("Proton port forwarding: inactive")
 		}
 	}
-	if tunnelErr != nil {
-		fmt.Printf("Proton VPN: unavailable (%v)\n", tunnelErr)
+	if errors.Is(tunnelErr, proton.ErrDisconnected) {
+		fmt.Println("Proton VPN: disconnected")
+	} else if tunnelErr != nil {
+		fmt.Printf("Proton VPN: unknown (%v)\n", tunnelErr)
 	} else {
 		fmt.Printf("Proton VPN: connected on %s (%s)\n", tunnel.Interface, tunnel.Address)
 	}
@@ -154,6 +178,9 @@ Usage:
   qbt-proton-guard run [--interval 500ms]  Run the foreground guard
   qbt-proton-guard once                    Enforce the safe binding once
   qbt-proton-guard status                  Show Proton and qBittorrent state
+  qbt-proton-guard details                 Show the last diagnostic snapshot
+  qbt-proton-guard ui                      Open the status icon (Linux/Windows)
+  qbt-proton-guard icon-login status|on|off Show or change icon login behavior
   qbt-proton-guard install                 Install and start the user service
   qbt-proton-guard uninstall               Remove the user service
   qbt-proton-guard version                 Print the version`)

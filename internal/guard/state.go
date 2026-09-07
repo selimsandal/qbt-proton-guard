@@ -16,6 +16,10 @@ type RuntimeState struct {
 	ForwardedPort                uint16    `json:"forwarded_port,omitempty"`
 	PortForwardingError          string    `json:"port_forwarding_error,omitempty"`
 	Error                        string    `json:"error,omitempty"`
+	ProtonDetectionError         string    `json:"proton_detection_error,omitempty"`
+	QBittorrentDetectionError    string    `json:"qbittorrent_detection_error,omitempty"`
+	SafetyReadError              string    `json:"safety_read_error,omitempty"`
+	LastAction                   string    `json:"last_action,omitempty"`
 	ProtonConnected              bool      `json:"proton_connected"`
 	ProtonInterface              string    `json:"proton_interface,omitempty"`
 	ProtonAddress                string    `json:"proton_address,omitempty"`

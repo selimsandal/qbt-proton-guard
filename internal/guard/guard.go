@@ -2,6 +2,7 @@ package guard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -14,12 +15,22 @@ import (
 )
 
 type Guard struct {
-	ports portforward.Manager
+	ports      portforward.Manager
+	lastAction string
+}
+
+const notificationFailureDelay = 3 * time.Second
+
+type notificationState struct {
+	failureSince    time.Time
+	failureNotified bool
+	pendingAction   string
 }
 
 func Run(ctx context.Context, interval time.Duration) error {
 	guard := &Guard{}
 	lastResult := ""
+	var notifications notificationState
 	for {
 		result, err := guard.Enforce(ctx)
 		enforceErr := err
@@ -34,6 +45,7 @@ func Run(ctx context.Context, interval time.Duration) error {
 			Healthy:       enforceErr == nil && portErr == nil,
 			ForwardedPort: port,
 		}
+		state.LastAction = guard.lastAction
 		if enforceErr != nil {
 			state.Error = enforceErr.Error()
 		}
@@ -46,12 +58,15 @@ func Run(ctx context.Context, interval time.Duration) error {
 		}
 		if result != lastResult {
 			log.Print(result)
+			lastResult = result
+		}
+		notification, send := notifications.update(time.Now(), state)
+		if send {
 			notifyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			if err := notify.Send(notifyCtx, result); err != nil {
+			if err := notify.Send(notifyCtx, notification); err != nil {
 				log.Printf("send notification: %v", err)
 			}
 			cancel()
-			lastResult = result
 		}
 		timer := time.NewTimer(interval)
 		select {
@@ -63,11 +78,42 @@ func Run(ctx context.Context, interval time.Duration) error {
 	}
 }
 
+func (n *notificationState) update(now time.Time, state RuntimeState) (string, bool) {
+	if state.LastAction != "" {
+		n.pendingAction = state.LastAction
+	}
+	failing := state.Error != "" || state.PortForwardingError != "" || state.ProtonDetectionError != "" || state.QBittorrentDetectionError != "" || state.SafetyReadError != ""
+	if failing {
+		if n.failureSince.IsZero() {
+			n.failureSince = now
+		}
+	} else {
+		n.failureSince = time.Time{}
+		if n.failureNotified {
+			n.failureNotified = false
+			return "Protection has recovered and is operating normally.", true
+		}
+	}
+	if n.pendingAction != "" {
+		message := n.pendingAction
+		n.pendingAction = ""
+		return message, true
+	}
+	if failing && !n.failureNotified && now.Sub(n.failureSince) >= notificationFailureDelay {
+		n.failureNotified = true
+		return "Protection is impaired. Open qbt-proton-guard for details.", true
+	}
+	return "", false
+}
+
 func (guard *Guard) populateRuntimeState(ctx context.Context, state *RuntimeState) {
 	if tunnel, err := proton.Detect(ctx); err == nil {
 		state.ProtonConnected = true
 		state.ProtonInterface = tunnel.Interface
 		state.ProtonAddress = tunnel.Address
+	} else if !errors.Is(err, proton.ErrDisconnected) {
+		state.ProtonDetectionError = err.Error()
+		state.Healthy = false
 	}
 	if path, err := qbittorrent.FindConfig(); err == nil {
 		if safety, err := qbittorrent.ReadSafety(path); err == nil {
@@ -76,10 +122,19 @@ func (guard *Guard) populateRuntimeState(ctx context.Context, state *RuntimeStat
 			state.QBittorrentPort = safety.Port
 			state.LocalPeerDiscoveryDisabled = safety.LocalPeerDiscoveryDisabled
 			state.RouterPortForwardingDisabled = safety.RouterPortForwardingDisabled
+		} else {
+			state.SafetyReadError = err.Error()
+			state.Healthy = false
 		}
+	} else {
+		state.SafetyReadError = err.Error()
+		state.Healthy = false
 	}
 	if running, err := qbittorrent.Running(ctx); err == nil {
 		state.QBittorrentRunning = running
+	} else {
+		state.QBittorrentDetectionError = err.Error()
+		state.Healthy = false
 	}
 }
 
@@ -88,6 +143,7 @@ func Enforce(ctx context.Context) (string, error) {
 }
 
 func (guard *Guard) Enforce(ctx context.Context) (string, error) {
+	guard.lastAction = ""
 	target := qbittorrent.Binding{Interface: qbittorrent.DisabledInterface, Name: qbittorrent.DisabledInterface}
 	tunnel, tunnelErr := proton.Detect(ctx)
 	if tunnelErr == nil {
@@ -133,6 +189,7 @@ func (guard *Guard) Enforce(ctx context.Context) (string, error) {
 		if err := qbittorrent.Stop(ctx); err != nil {
 			return "", fmt.Errorf("stop unsafely bound qBittorrent: %w", err)
 		}
+		guard.lastAction = "The guard stopped qBittorrent before updating its network settings."
 	}
 	if err := qbittorrent.WriteSafety(path, desired); err != nil {
 		return "", err
@@ -146,9 +203,13 @@ func (guard *Guard) Enforce(ctx context.Context) (string, error) {
 		if err := qbittorrent.StartAndWait(ctx); err != nil {
 			return "", fmt.Errorf("binding corrected to %s but qBittorrent restart failed: %w", target.Interface, err)
 		}
+		guard.lastAction = "The guard restarted qBittorrent to use the Proton VPN connection."
 		return describe(target.Interface, desired.Port, true, nil, portErr), nil
 	}
 	if tunnelErr != nil {
+		if wasRunning {
+			guard.lastAction = "qBittorrent was stopped because a safe Proton VPN connection could not be confirmed."
+		}
 		return fmt.Sprintf("fail-closed: Proton unavailable; qBittorrent stopped and bound to %s", target.Interface), nil
 	}
 	return describe(target.Interface, desired.Port, false, nil, portErr), nil

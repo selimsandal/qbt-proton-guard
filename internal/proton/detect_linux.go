@@ -17,8 +17,14 @@ func detect(ctx context.Context) (Tunnel, error) {
 	}
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Split(line, ":")
-		if len(fields) != 4 || !strings.HasPrefix(fields[0], "ProtonVPN ") {
+		if len(fields) == 0 || !strings.HasPrefix(fields[0], "ProtonVPN ") {
 			continue
+		}
+		if len(fields) != 4 {
+			return Tunnel{}, fmt.Errorf("invalid NetworkManager ProtonVPN connection response")
+		}
+		if fields[3] == "activated" && (fields[1] == "wireguard" || fields[1] == "vpn") && fields[2] == "" {
+			return Tunnel{}, fmt.Errorf("active ProtonVPN connection has no network interface")
 		}
 		if (fields[1] == "wireguard" || fields[1] == "vpn") && fields[2] != "" && fields[3] == "activated" {
 			addressOutput, err := command.Output(ctx, "ip", "-o", "-4", "address", "show", "dev", fields[2], "scope", "global")

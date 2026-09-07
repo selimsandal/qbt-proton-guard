@@ -18,3 +18,11 @@ func Uninstall() error {
 func ServiceStatus() (string, error) {
 	return "unsupported", nil
 }
+
+func StatusAtLogin() (bool, error) {
+	return false, fmt.Errorf("status icon login is unsupported on %s", runtime.GOOS)
+}
+
+func SetStatusAtLogin(bool) error {
+	return fmt.Errorf("status icon login is unsupported on %s", runtime.GOOS)
+}

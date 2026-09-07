@@ -3,10 +3,12 @@
 package statusapp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
+	"image/png"
+	"log"
+	"os/exec"
 	"runtime"
 	"strings"
 	"time"
@@ -18,58 +20,63 @@ import (
 )
 
 const (
-	wmApp          = 0x8000
-	wmTray         = wmApp + 1
-	wmCommand      = 0x0111
-	wmDestroy      = 0x0002
-	wmClose        = 0x0010
-	wmTimer        = 0x0113
-	wmRButtonUp    = 0x0205
-	wmLButtonUp    = 0x0202
-	wmContextMenu  = 0x007B
-	nimAdd         = 0
-	nimModify      = 1
-	nimDelete      = 2
-	nimSetVersion  = 4
-	nifMessage     = 1
-	nifIcon        = 2
-	nifTip         = 4
-	nifInfo        = 0x10
-	niifUser       = 4
-	niifLargeIcon  = 0x20
-	notifyVersion4 = 4
-	imageIcon      = 1
-	lrLoadFromFile = 0x10
-	mfString       = 0
-	mfGray         = 1
-	mfSeparator    = 0x800
-	tpmRightButton = 2
-	cmdQuit        = 100
+	wmApp            = 0x8000
+	wmTray           = wmApp + 1
+	wmCommand        = 0x0111
+	wmDestroy        = 0x0002
+	wmClose          = 0x0010
+	wmTimer          = 0x0113
+	wmRButtonUp      = 0x0205
+	wmLButtonUp      = 0x0202
+	wmContextMenu    = 0x007B
+	nimAdd           = 0
+	nimModify        = 1
+	nimDelete        = 2
+	nimSetVersion    = 4
+	nifMessage       = 1
+	nifIcon          = 2
+	nifTip           = 4
+	nifInfo          = 0x10
+	niifUser         = 4
+	niifLargeIcon    = 0x20
+	notifyVersion4   = 4
+	mfString         = 0
+	mfGray           = 1
+	mfChecked        = 8
+	mfSeparator      = 0x800
+	tpmRightButton   = 2
+	cmdQuit          = 100
+	cmdColoredIcon   = 101
+	cmdNotifications = 102
+	cmdLogin         = 103
+	cmdDetails       = 104
+	cmdCopy          = 105
 )
 
 var (
-	user32               = windows.NewLazySystemDLL("user32.dll")
-	kernel32             = windows.NewLazySystemDLL("kernel32.dll")
-	procRegisterClassExW = user32.NewProc("RegisterClassExW")
-	procCreateWindowExW  = user32.NewProc("CreateWindowExW")
-	procDefWindowProcW   = user32.NewProc("DefWindowProcW")
-	procDestroyWindow    = user32.NewProc("DestroyWindow")
-	procPostQuitMessage  = user32.NewProc("PostQuitMessage")
-	procGetMessageW      = user32.NewProc("GetMessageW")
-	procTranslateMessage = user32.NewProc("TranslateMessage")
-	procDispatchMessageW = user32.NewProc("DispatchMessageW")
-	procShellNotifyIconW = windows.NewLazySystemDLL("shell32.dll").NewProc("Shell_NotifyIconW")
-	procLoadImageW       = user32.NewProc("LoadImageW")
-	procLoadIconW        = user32.NewProc("LoadIconW")
-	procSetTimer         = user32.NewProc("SetTimer")
-	procCreatePopupMenu  = user32.NewProc("CreatePopupMenu")
-	procAppendMenuW      = user32.NewProc("AppendMenuW")
-	procTrackPopupMenu   = user32.NewProc("TrackPopupMenu")
-	procDestroyMenu      = user32.NewProc("DestroyMenu")
-	procGetCursorPos     = user32.NewProc("GetCursorPos")
-	procSetForegroundWin = user32.NewProc("SetForegroundWindow")
-	procPostMessageW     = user32.NewProc("PostMessageW")
-	procCreateMutexW     = kernel32.NewProc("CreateMutexW")
+	user32                       = windows.NewLazySystemDLL("user32.dll")
+	kernel32                     = windows.NewLazySystemDLL("kernel32.dll")
+	procRegisterClassExW         = user32.NewProc("RegisterClassExW")
+	procCreateWindowExW          = user32.NewProc("CreateWindowExW")
+	procDefWindowProcW           = user32.NewProc("DefWindowProcW")
+	procDestroyWindow            = user32.NewProc("DestroyWindow")
+	procPostQuitMessage          = user32.NewProc("PostQuitMessage")
+	procGetMessageW              = user32.NewProc("GetMessageW")
+	procTranslateMessage         = user32.NewProc("TranslateMessage")
+	procDispatchMessageW         = user32.NewProc("DispatchMessageW")
+	procShellNotifyIconW         = windows.NewLazySystemDLL("shell32.dll").NewProc("Shell_NotifyIconW")
+	procCreateIconFromResourceEx = user32.NewProc("CreateIconFromResourceEx")
+	procDestroyIcon              = user32.NewProc("DestroyIcon")
+	procSetTimer                 = user32.NewProc("SetTimer")
+	procCreatePopupMenu          = user32.NewProc("CreatePopupMenu")
+	procAppendMenuW              = user32.NewProc("AppendMenuW")
+	procTrackPopupMenu           = user32.NewProc("TrackPopupMenu")
+	procDestroyMenu              = user32.NewProc("DestroyMenu")
+	procGetCursorPos             = user32.NewProc("GetCursorPos")
+	procSetForegroundWin         = user32.NewProc("SetForegroundWindow")
+	procPostMessageW             = user32.NewProc("PostMessageW")
+	procCreateMutexW             = kernel32.NewProc("CreateMutexW")
+	procMessageBoxW              = user32.NewProc("MessageBoxW")
 )
 
 type wndClassEx struct {
@@ -111,10 +118,12 @@ type notifyIconData struct {
 }
 
 type trayApp struct {
-	window   windows.Handle
-	icon     windows.Handle
-	state    guard.RuntimeState
-	stateErr error
+	window        windows.Handle
+	icon          windows.Handle
+	colored       bool
+	notifications bool
+	state         guard.RuntimeState
+	stateErr      error
 }
 
 var activeApp *trayApp
@@ -142,7 +151,14 @@ func Run(ctx context.Context) error {
 	if window == 0 {
 		return fmt.Errorf("create status window: %w", err)
 	}
-	app := &trayApp{window: windows.Handle(window), icon: loadAppIcon()}
+	colored := preferenceEnabled("colored-icon")
+	icon, err := loadAppIcon(colored)
+	if err != nil {
+		procDestroyWindow.Call(window)
+		return err
+	}
+	app := &trayApp{window: windows.Handle(window), icon: icon, colored: colored, notifications: preferenceEnabled("notifications")}
+	defer func() { procDestroyIcon.Call(uintptr(app.icon)) }()
 	activeApp = app
 	defer func() { activeApp = nil }()
 	app.refresh()
@@ -184,6 +200,35 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		case wmCommand:
 			if uint16(wParam) == cmdQuit {
 				procDestroyWindow.Call(hwnd)
+			} else if uint16(wParam) == cmdDetails {
+				activeApp.showText("qbt-proton-guard Details", FullStatus(activeApp.state, activeApp.stateErr, time.Now()))
+			} else if uint16(wParam) == cmdCopy {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				command := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; [Console]::InputEncoding=[Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())")
+				command.Stdin = strings.NewReader(FullStatus(activeApp.state, activeApp.stateErr, time.Now()))
+				if output, err := command.CombinedOutput(); err != nil {
+					activeApp.showText("Could not copy status", fmt.Sprintf("%v: %s", err, output))
+				}
+				cancel()
+			} else if uint16(wParam) == cmdLogin {
+				enabled, err := guard.StatusAtLogin()
+				if err == nil {
+					err = guard.SetStatusAtLogin(!enabled)
+				}
+				if err != nil {
+					activeApp.showText("Could not change login setting", err.Error())
+				}
+			} else if uint16(wParam) == cmdColoredIcon {
+				activeApp.toggleColoredIcon()
+			} else if uint16(wParam) == cmdNotifications {
+				if !activeApp.notifications {
+					activeApp.refresh() // Discard queued muted messages before enabling.
+				}
+				if err := savePreference("notifications", !activeApp.notifications); err != nil {
+					log.Printf("save notifications setting: %v", err)
+				} else {
+					activeApp.notifications = !activeApp.notifications
+				}
 			}
 			return 0
 		case wmClose:
@@ -203,7 +248,9 @@ func (app *trayApp) refresh() {
 	app.updateTray(nimModify, "")
 	pending, _ := notify.ListPending()
 	for _, notification := range pending {
-		app.updateTray(nimModify, notification.Message)
+		if app.notifications {
+			app.updateTray(nimModify, notification.Message)
+		}
 		_ = notify.Remove(notification)
 	}
 }
@@ -230,10 +277,7 @@ func (app *trayApp) setVersion() {
 }
 
 func (app *trayApp) tooltip() string {
-	if app.stateErr != nil || time.Since(app.state.UpdatedAt) >= 10*time.Second || !app.state.Healthy {
-		return "qbt-proton-guard: Needs attention"
-	}
-	return "qbt-proton-guard: Protected"
+	return strings.Join(app.menuLines()[:3], "\n")
 }
 
 func (app *trayApp) showMenu() {
@@ -246,6 +290,26 @@ func (app *trayApp) showMenu() {
 		appendMenu(menu, mfString, 0, label)
 	}
 	appendMenu(menu, mfSeparator, 0, "")
+	appendMenu(menu, mfString, cmdDetails, "Details…")
+	appendMenu(menu, mfString, cmdCopy, "Copy full status")
+	appendMenu(menu, mfSeparator, 0, "")
+	flags := uintptr(mfString)
+	if app.colored {
+		flags |= mfChecked
+	}
+	appendMenu(menu, flags, cmdColoredIcon, "Colored icon")
+	flags = mfString
+	if app.notifications {
+		flags |= mfChecked
+	}
+	appendMenu(menu, flags, cmdNotifications, "Notifications")
+	flags = mfString
+	if enabled, err := guard.StatusAtLogin(); err != nil {
+		flags |= mfGray
+	} else if enabled {
+		flags |= mfChecked
+	}
+	appendMenu(menu, flags, cmdLogin, "Show icon at login")
 	appendMenu(menu, mfString, cmdQuit, "Quit Status Icon")
 	var cursor point
 	procGetCursorPos.Call(uintptr(unsafe.Pointer(&cursor)))
@@ -254,41 +318,48 @@ func (app *trayApp) showMenu() {
 }
 
 func (app *trayApp) menuLines() []string {
-	if app.stateErr != nil {
-		return []string{"Guard status unavailable", "The protection service may not be running."}
-	}
-	fresh := time.Since(app.state.UpdatedAt) < 10*time.Second
-	title := "Needs attention"
-	if fresh && app.state.Healthy {
-		title = "Protected"
-	}
-	service := "Heartbeat stale"
-	if fresh {
-		service = "Running"
-	}
-	vpn := "Unavailable"
-	if app.state.ProtonConnected {
-		vpn = strings.TrimSpace(app.state.ProtonInterface + " • " + app.state.ProtonAddress)
-	}
-	port := "Unavailable"
-	if app.state.ForwardedPort != 0 && app.state.PortForwardingError == "" {
-		port = fmt.Sprint(app.state.ForwardedPort)
-	}
-	qbit := "Stopped"
-	if app.state.QBittorrentRunning {
-		qbit = fmt.Sprintf("Running • %s:%d", app.state.QBittorrentAddress, app.state.QBittorrentPort)
-	}
-	return []string{title, app.state.Message, "Service: " + service, "Proton VPN: " + vpn, "Forwarded port: " + port, "qBittorrent: " + qbit}
+	return statusLines(app.state, app.stateErr, time.Now())
 }
 
-func loadAppIcon() windows.Handle {
-	path := filepath.Join(os.Getenv("LOCALAPPDATA"), "qbt-proton-guard", "qbt-proton-guard.ico")
-	pathUTF16, _ := windows.UTF16PtrFromString(path)
-	icon, _, _ := procLoadImageW.Call(0, uintptr(unsafe.Pointer(pathUTF16)), imageIcon, 0, 0, lrLoadFromFile)
-	if icon == 0 {
-		icon, _, _ = procLoadIconW.Call(0, 32512)
+func (app *trayApp) showText(title, text string) {
+	titleWide, _ := windows.UTF16PtrFromString(title)
+	textWide, _ := windows.UTF16PtrFromString(text)
+	procMessageBoxW.Call(uintptr(app.window), uintptr(unsafe.Pointer(textWide)), uintptr(unsafe.Pointer(titleWide)), 0)
+}
+
+func (app *trayApp) toggleColoredIcon() {
+	icon, err := loadAppIcon(!app.colored)
+	if err != nil {
+		log.Printf("change colored icon: %v", err)
+		return
 	}
-	return windows.Handle(icon)
+	if err := savePreference("colored-icon", !app.colored); err != nil {
+		procDestroyIcon.Call(uintptr(icon))
+		log.Printf("save colored icon setting: %v", err)
+		return
+	}
+	previous := app.icon
+	app.colored, app.icon = !app.colored, icon
+	app.updateTray(nimModify, "")
+	procDestroyIcon.Call(uintptr(previous))
+}
+
+func loadAppIcon(colored bool) (windows.Handle, error) {
+	image, err := statusIcon(colored)
+	if err != nil {
+		return 0, err
+	}
+	var buffer bytes.Buffer
+	if err := png.Encode(&buffer, image); err != nil {
+		return 0, err
+	}
+	data := buffer.Bytes()
+	icon, _, err := procCreateIconFromResourceEx.Call(uintptr(unsafe.Pointer(&data[0])), uintptr(len(data)), 1, 0x00030000, 32, 32, 0)
+	runtime.KeepAlive(data)
+	if icon == 0 {
+		return 0, fmt.Errorf("create tray icon: %w", err)
+	}
+	return windows.Handle(icon), nil
 }
 
 func appendMenu(menu uintptr, flags, id uintptr, label string) {

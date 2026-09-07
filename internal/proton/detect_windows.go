@@ -33,7 +33,7 @@ func detect(ctx context.Context) (Tunnel, error) {
 		return Tunnel{}, fmt.Errorf("decode ProtonVPN network adapter: %w", err)
 	}
 	if adapter.Name == "" || adapter.InterfaceGUID == "" || adapter.Index <= 0 || adapter.IPAddress == "" {
-		return Tunnel{}, ErrDisconnected
+		return Tunnel{}, fmt.Errorf("ProtonVPN network adapter response is incomplete")
 	}
 	return Tunnel{Interface: "{" + strings.Trim(adapter.InterfaceGUID, "{}") + "}", Name: adapter.Name, Address: adapter.IPAddress}, nil
 }

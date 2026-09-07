@@ -19,8 +19,13 @@ func detect(ctx context.Context) (Tunnel, error) {
 	if err != nil {
 		return Tunnel{}, fmt.Errorf("read ProtonVPN status: %w", err)
 	}
-	if firstLine(status) != "Connected" {
+	switch firstLine(status) {
+	case "Disconnected", "Connecting", "Disconnecting":
 		return Tunnel{}, ErrDisconnected
+	case "Connected":
+		// Inspect the active tunnel below.
+	default:
+		return Tunnel{}, fmt.Errorf("unrecognized ProtonVPN connection status %q", firstLine(status))
 	}
 	match := macInterfacePattern.FindStringSubmatch(status)
 	if len(match) != 2 || !strings.HasPrefix(match[1], "utun") {
