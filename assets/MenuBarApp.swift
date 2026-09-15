@@ -149,54 +149,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 }
             }
         }
-        addInfo("qBittorrent: \(qbit)")
-        addInfo("Proton VPN: \(vpn)")
-        addInfo("Guard: \(service)")
-        addInfo("Forwarded port: \(port)")
+        addSection("Status")
+        addStatusRow(label: "qBittorrent", value: qbit)
+        addStatusRow(label: "Proton VPN", value: vpn)
+        addStatusRow(label: "Guard", value: service)
+        addStatusRow(label: "Forwarded port", value: port)
         menu.addItem(.separator())
         addAction("Details…", action: #selector(showDetails))
         addAction("Copy full status", action: #selector(copyStatus))
         addAction("Open guard log", action: #selector(openLog))
+        menu.addItem(.separator())
         addUpdateItems()
         menu.addItem(.separator())
         addSettings()
+        menu.addItem(.separator())
         addAction("Quit Status Icon", action: #selector(quit))
     }
 
     private func buildUnavailableMenu() {
         menu.removeAllItems()
-        addInfo("qBittorrent: Unknown")
-        addInfo("Proton VPN: Unknown")
-        addInfo("Guard: Status unavailable")
-        addInfo("Forwarded port: Unknown")
+        addSection("Status")
+        addStatusRow(label: "qBittorrent", value: "Unknown")
+        addStatusRow(label: "Proton VPN", value: "Unknown")
+        addStatusRow(label: "Guard", value: "Status unavailable")
+        addStatusRow(label: "Forwarded port", value: "Unknown")
         menu.addItem(.separator())
         addAction("Details…", action: #selector(showDetails))
         addAction("Copy full status", action: #selector(copyStatus))
         addAction("Open guard log", action: #selector(openLog))
+        menu.addItem(.separator())
         addUpdateItems()
         menu.addItem(.separator())
         addSettings()
+        menu.addItem(.separator())
         addAction("Quit Status Icon", action: #selector(quit))
     }
 
     private func addSettings() {
+        let preferences = NSMenu(title: "Preferences")
         let item = NSMenuItem(title: "Colored icon", action: #selector(toggleColoredIcon), keyEquivalent: "")
         item.target = self
         item.state = coloredIcon ? .on : .off
-        menu.addItem(item)
+        preferences.addItem(item)
         let notifications = NSMenuItem(title: "Notifications", action: #selector(toggleNotifications), keyEquivalent: "")
         notifications.target = self
         notifications.state = notificationsEnabled ? .on : .off
-        menu.addItem(notifications)
+        preferences.addItem(notifications)
         let automaticUpdateChecks = NSMenuItem(title: "Automatically check for updates", action: #selector(toggleAutomaticUpdateChecks), keyEquivalent: "")
         automaticUpdateChecks.target = self
         automaticUpdateChecks.state = automaticUpdateChecksEnabled ? .on : .off
-        menu.addItem(automaticUpdateChecks)
+        preferences.addItem(automaticUpdateChecks)
         let login = NSMenuItem(title: showAtLogin == nil ? "Show icon at login (unavailable)" : "Show icon at login", action: #selector(toggleLogin), keyEquivalent: "")
         login.target = self
         login.state = showAtLogin == true ? .on : .off
         login.isEnabled = showAtLogin != nil
-        menu.addItem(login)
+        preferences.addItem(login)
+        let preferencesItem = NSMenuItem(title: "Preferences", action: nil, keyEquivalent: "")
+        preferencesItem.submenu = preferences
+        menu.addItem(preferencesItem)
     }
 
     @objc private func toggleColoredIcon() {
@@ -217,14 +227,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         refresh()
     }
 
-    private func addInfo(_ title: String) {
-        let label = NSTextField(labelWithString: title)
-        label.font = .menuFont(ofSize: 0)
-        label.textColor = .labelColor
-        let width = max(260, label.intrinsicContentSize.width + 28)
-        label.frame = NSRect(x: 14, y: 3, width: width - 28, height: 18)
+    private func addSection(_ title: String) {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        menu.addItem(item)
+    }
+
+    private func addStatusRow(label: String, value: String) {
+        let width: CGFloat = 300
+        let labelField = NSTextField(labelWithString: label)
+        labelField.font = .menuFont(ofSize: 0)
+        labelField.textColor = .secondaryLabelColor
+        labelField.frame = NSRect(x: 16, y: 3, width: 126, height: 18)
+
+        let valueField = NSTextField(labelWithString: value)
+        valueField.font = .menuFont(ofSize: 0)
+        valueField.textColor = .labelColor
+        valueField.alignment = .right
+        valueField.lineBreakMode = .byTruncatingMiddle
+        valueField.frame = NSRect(x: 146, y: 3, width: width - 162, height: 18)
+
         let view = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 22))
-        view.addSubview(label)
+        view.addSubview(labelField)
+        view.addSubview(valueField)
         let item = NSMenuItem()
         item.view = view
         menu.addItem(item)
@@ -338,7 +363,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let stale = Date().timeIntervalSince1970 - (state?["updated_at"] as? Double ?? 0) > 600
         let busy = state?["busy"] as? Bool == true && !stale
         let message = state?["message"] as? String ?? "Not checked yet"
-        addInfo("Update status: \(message)")
+        addSection("Updates")
+        addStatusRow(label: "Status", value: message)
         addAction("Update…", action: #selector(openUpdater))
         menu.items.last?.isEnabled = !busy
     }
