@@ -36,14 +36,16 @@ type release struct {
 // Run checks or installs the latest release. Installation requires authenticated
 // HTTPS, a release signature from the embedded key, and matching binary hashes.
 func Run(ctx context.Context, current string, checkOnly bool) (result error) {
-	if !checkOnly {
-		_ = WriteStatus("Checking for updates…", true, "")
-		defer func() {
-			if result != nil {
+	_ = WriteStatus("Checking for updates…", true, "")
+	defer func() {
+		if result != nil {
+			if checkOnly {
+				FinishCheck(result, false)
+			} else {
 				Finish(result)
 			}
-		}()
-	}
+		}
+	}()
 	client := updateClient()
 	r, err := latest(ctx, client)
 	if err != nil {
@@ -53,13 +55,12 @@ func Run(ctx context.Context, current string, checkOnly bool) (result error) {
 	fmt.Printf("Installed: %s\nLatest: %s\n", current, version)
 	if !newer(version, current) {
 		fmt.Println("Already up to date; no changes made.")
-		if !checkOnly {
-			_ = WriteStatus("Up to date", false, "")
-		}
+		FinishCheck(nil, false)
 		return nil
 	}
 	if checkOnly {
 		fmt.Println("Run qbt-proton-guard update to install this release.")
+		FinishCheck(nil, true)
 		return nil
 	}
 	name := "qbt-proton-guard-" + runtime.GOOS + "-" + runtime.GOARCH

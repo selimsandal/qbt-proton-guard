@@ -53,6 +53,7 @@ const (
 	cmdDetails       = 104
 	cmdCopy          = 105
 	cmdUpdate        = 106
+	cmdAutoUpdate    = 107
 )
 
 var (
@@ -120,13 +121,14 @@ type notifyIconData struct {
 }
 
 type trayApp struct {
-	window        windows.Handle
-	icon          windows.Handle
-	colored       bool
-	notifications bool
-	state         guard.RuntimeState
-	stateErr      error
-	updateStatus  selfupdate.Status
+	window           windows.Handle
+	icon             windows.Handle
+	colored          bool
+	notifications    bool
+	autoUpdateChecks bool
+	state            guard.RuntimeState
+	stateErr         error
+	updateStatus     selfupdate.Status
 }
 
 var activeApp *trayApp
@@ -160,7 +162,12 @@ func Run(ctx context.Context) error {
 		procDestroyWindow.Call(window)
 		return err
 	}
-	app := &trayApp{window: windows.Handle(window), icon: icon, colored: colored, notifications: preferenceEnabled("notifications")}
+	app := &trayApp{window: windows.Handle(window), icon: icon, colored: colored, notifications: preferenceEnabled("notifications"), autoUpdateChecks: preferenceEnabled("auto-update-checks")}
+	if app.autoUpdateChecks {
+		if err := selfupdate.StartCheckIfDue(); err != nil {
+			log.Printf("start automatic update check: %v", err)
+		}
+	}
 	defer func() { procDestroyIcon.Call(uintptr(app.icon)) }()
 	activeApp = app
 	defer func() { activeApp = nil }()
@@ -235,6 +242,17 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 					log.Printf("save notifications setting: %v", err)
 				} else {
 					activeApp.notifications = !activeApp.notifications
+				}
+			} else if uint16(wParam) == cmdAutoUpdate {
+				if err := savePreference("auto-update-checks", !activeApp.autoUpdateChecks); err != nil {
+					activeApp.showText("Could not change automatic update checks", err.Error())
+				} else {
+					activeApp.autoUpdateChecks = !activeApp.autoUpdateChecks
+					if activeApp.autoUpdateChecks {
+						if err := selfupdate.StartCheckIfDue(); err != nil {
+							activeApp.showText("Could not start automatic update check", err.Error())
+						}
+					}
 				}
 			}
 			return 0
@@ -312,6 +330,11 @@ func (app *trayApp) showMenu() {
 		flags |= mfGray
 	}
 	appendMenu(menu, flags, cmdUpdate, "Update…")
+	updateStatus := app.updateStatus.Message
+	if updateStatus == "" {
+		updateStatus = "Not checked yet"
+	}
+	appendMenu(menu, mfGray, 0, "Update status: "+updateStatus)
 	appendMenu(menu, mfSeparator, 0, "")
 	flags = mfString
 	if app.colored {
@@ -323,6 +346,11 @@ func (app *trayApp) showMenu() {
 		flags |= mfChecked
 	}
 	appendMenu(menu, flags, cmdNotifications, "Notifications")
+	flags = mfString
+	if app.autoUpdateChecks {
+		flags |= mfChecked
+	}
+	appendMenu(menu, flags, cmdAutoUpdate, "Automatically check for updates")
 	flags = mfString
 	if enabled, err := guard.StatusAtLogin(); err != nil {
 		flags |= mfGray

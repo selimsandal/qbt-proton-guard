@@ -8,13 +8,13 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func startBackground(binary, log string) error {
+func startBackground(binary, log string, arguments ...string) error {
 	f, err := os.OpenFile(log, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	cmd := exec.Command(binary, "update")
+	cmd := exec.Command(binary, arguments...)
 	cmd.Stdout, cmd.Stderr = f, f
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW | windows.CREATE_BREAKAWAY_FROM_JOB}
 	if err := cmd.Start(); err != nil {

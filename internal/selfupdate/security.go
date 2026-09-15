@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// The trust anchor is shipped with the app, never obtained from the download.
+// The app ships its trust anchor instead of downloading it.
 //
 //go:embed release-public-key.pem
 var releasePublicKeyPEM string
@@ -29,7 +29,7 @@ func verifyRelease(tag string, sums, signature []byte) error {
 	if !ok {
 		return fmt.Errorf("release key is not Ed25519")
 	}
-	// Bind the checksums to the release identity to reject relabelled old binaries.
+	// Bind checksums to the release identity and reject relabeled old binaries.
 	payload := append([]byte("qbt-proton-guard-release\n"+tag+"\n"), sums...)
 	if !ed25519.Verify(key, payload, signature) {
 		return fmt.Errorf("release signature verification failed; refusing untrusted update")
@@ -49,8 +49,8 @@ func trustedURL(u *url.URL) error {
 }
 
 func updateClient() *http.Client {
-	// Go's default transport validates certificate chains and hostname matches.
-	// Do not disable TLS verification, even when using a configured HTTPS proxy.
+	// Go's default transport validates certificate chains and hostnames.
+	// Keep TLS verification enabled for configured HTTPS proxies.
 	return &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return fmt.Errorf("too many update redirects")

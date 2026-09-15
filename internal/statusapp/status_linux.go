@@ -31,6 +31,12 @@ func Run(ctx context.Context) error {
 	defer lock.Close()
 	colored := preferenceEnabled("colored-icon")
 	notifications := preferenceEnabled("notifications")
+	autoUpdateChecks := preferenceEnabled("auto-update-checks")
+	if autoUpdateChecks {
+		if err := selfupdate.StartCheckIfDue(); err != nil {
+			log.Printf("start automatic update check: %v", err)
+		}
+	}
 	icon, err := statusIcon(colored)
 	if err != nil {
 		return err
@@ -66,6 +72,7 @@ func Run(ctx context.Context) error {
 	portRow, _ := item.Menu().AddChild(tray.MenuItemLabel("Forwarded port: Checking"))
 	_, _ = item.Menu().AddChild(tray.MenuItemType(tray.Separator))
 	var updateItem *tray.MenuItem
+	var updateProgress *tray.MenuItem
 	for _, action := range []struct {
 		label string
 		run   func() error
@@ -81,6 +88,7 @@ func Run(ctx context.Context) error {
 			updateItem = actionItem
 		}
 	}
+	updateProgress, _ = item.Menu().AddChild(tray.MenuItemLabel("Update status: Checking for updates…"), tray.MenuItemEnabled(false))
 	_, _ = item.Menu().AddChild(tray.MenuItemType(tray.Separator))
 	// Menu callbacks run separately from the refresh loop; serialize the toggle here.
 	toggleIcon := make(chan struct{}, 1)
@@ -104,6 +112,19 @@ func Run(ctx context.Context) error {
 		tray.MenuItemHandler(tray.ClickedHandler(func(any, uint32) error {
 			select {
 			case toggleNotifications <- struct{}{}:
+			default:
+			}
+			return nil
+		})),
+	)
+	toggleAutoUpdateChecks := make(chan struct{}, 1)
+	autoUpdateChecksSetting, _ := item.Menu().AddChild(
+		tray.MenuItemLabel("Automatically check for updates"),
+		tray.MenuItemToggleType(tray.Checkmark),
+		tray.MenuItemToggleState(map[bool]tray.MenuToggleState{true: tray.On, false: tray.Off}[autoUpdateChecks]),
+		tray.MenuItemHandler(tray.ClickedHandler(func(any, uint32) error {
+			select {
+			case toggleAutoUpdateChecks <- struct{}{}:
 			default:
 			}
 			return nil
@@ -152,6 +173,11 @@ func Run(ctx context.Context) error {
 		_ = portRow.SetProps(tray.MenuItemLabel(lines[3]))
 		updateStatus := selfupdate.ReadStatus()
 		_ = updateItem.SetProps(tray.MenuItemEnabled(!updateStatus.Busy))
+		progress := "Update status: " + updateStatus.Message
+		if updateStatus.Message == "" {
+			progress = "Update status: Not checked yet"
+		}
+		_ = updateProgress.SetProps(tray.MenuItemLabel(progress))
 		trayStatus := tray.Active
 		if needsAttention(state, err, now) {
 			trayStatus = tray.NeedsAttention
@@ -193,6 +219,18 @@ func Run(ctx context.Context) error {
 			}
 			notifications = !notifications
 			_ = notificationSetting.SetProps(tray.MenuItemToggleState(map[bool]tray.MenuToggleState{true: tray.On, false: tray.Off}[notifications]))
+		case <-toggleAutoUpdateChecks:
+			if err := savePreference("auto-update-checks", !autoUpdateChecks); err != nil {
+				log.Printf("save automatic update checks setting: %v", err)
+				continue
+			}
+			autoUpdateChecks = !autoUpdateChecks
+			_ = autoUpdateChecksSetting.SetProps(tray.MenuItemToggleState(map[bool]tray.MenuToggleState{true: tray.On, false: tray.Off}[autoUpdateChecks]))
+			if autoUpdateChecks {
+				if err := selfupdate.StartCheckIfDue(); err != nil {
+					log.Printf("start automatic update check: %v", err)
+				}
+			}
 		case <-ticker.C:
 		}
 	}

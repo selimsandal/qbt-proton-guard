@@ -54,6 +54,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var notificationsEnabled: Bool {
         UserDefaults.standard.object(forKey: "notificationsEnabled") as? Bool ?? true
     }
+    private var automaticUpdateChecksEnabled: Bool {
+        UserDefaults.standard.object(forKey: "automaticUpdateChecksEnabled") as? Bool ?? true
+    }
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { value in
@@ -83,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         statusItem.button?.toolTip = "qbt-proton-guard"
         statusItem.menu = menu
         showAtLogin = (try? runGuard(["icon-login", "status"])) .flatMap { Bool($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        startAutomaticUpdateCheckIfNeeded()
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.refresh()
@@ -184,6 +188,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         notifications.target = self
         notifications.state = notificationsEnabled ? .on : .off
         menu.addItem(notifications)
+        let automaticUpdateChecks = NSMenuItem(title: "Automatically check for updates", action: #selector(toggleAutomaticUpdateChecks), keyEquivalent: "")
+        automaticUpdateChecks.target = self
+        automaticUpdateChecks.state = automaticUpdateChecksEnabled ? .on : .off
+        menu.addItem(automaticUpdateChecks)
         let login = NSMenuItem(title: showAtLogin == nil ? "Show icon at login (unavailable)" : "Show icon at login", action: #selector(toggleLogin), keyEquivalent: "")
         login.target = self
         login.state = showAtLogin == true ? .on : .off
@@ -197,9 +205,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     @objc private func toggleNotifications() {
-        // Drain muted messages before re-enabling, including arrivals since the last tick.
+        // Remove messages queued while notifications were muted before enabling them.
         if !notificationsEnabled { deliverQueuedNotifications() }
         UserDefaults.standard.set(!notificationsEnabled, forKey: "notificationsEnabled")
+        refresh()
+    }
+
+    @objc private func toggleAutomaticUpdateChecks() {
+        UserDefaults.standard.set(!automaticUpdateChecksEnabled, forKey: "automaticUpdateChecksEnabled")
+        startAutomaticUpdateCheckIfNeeded()
         refresh()
     }
 
@@ -323,8 +337,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let state = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         let stale = Date().timeIntervalSince1970 - (state?["updated_at"] as? Double ?? 0) > 600
         let busy = state?["busy"] as? Bool == true && !stale
+        let message = state?["message"] as? String ?? "Not checked yet"
+        addInfo("Update status: \(message)")
         addAction("Update…", action: #selector(openUpdater))
         menu.items.last?.isEnabled = !busy
+    }
+
+    private func startAutomaticUpdateCheckIfNeeded() {
+        guard automaticUpdateChecksEnabled else { return }
+        do {
+            _ = try runGuard(["update-check-background"])
+        } catch {
+            NSLog("Could not start automatic update check: \(error.localizedDescription)")
+        }
     }
 
     private func showUpdateResultIfReady() {
@@ -336,7 +361,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         alert.messageText = message
         let detail = state["error"] as? String ?? ""
         alert.alertStyle = detail.isEmpty ? .informational : .warning
-        alert.informativeText = detail.isEmpty ? "qbt-proton-guard is ready." : detail
+        if detail.isEmpty {
+            alert.informativeText = message == "Up to date" ? "You already have the latest release." : "qbt-proton-guard is ready."
+        } else {
+            alert.informativeText = detail
+        }
         menu.cancelTracking()
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
@@ -357,8 +386,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 }
 
-// The staged installer uses this before replacing an app reopened from Finder,
-// which is not owned by the status LaunchAgent.
+// The staged installer runs this before replacing an app opened from Finder.
+// Finder does not attach that app to the status LaunchAgent.
 if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--stop-running" {
     let installed = URL(fileURLWithPath: CommandLine.arguments[2]).standardizedFileURL
     let running = NSWorkspace.shared.runningApplications.filter {

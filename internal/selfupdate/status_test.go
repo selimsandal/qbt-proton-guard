@@ -31,6 +31,14 @@ func TestUpdateStatusLifecycle(t *testing.T) {
 	if s := ReadStatus(); s.Busy || s.Error != "" || s.Message != "Update installed" {
 		t.Fatalf("success: %+v", s)
 	}
+	FinishCheck(nil, false)
+	if s := ReadStatus(); s.Busy || s.Message != "Up to date" || s.CheckedAt == 0 {
+		t.Fatalf("up to date: %+v", s)
+	}
+	FinishCheck(nil, true)
+	if s := ReadStatus(); s.Busy || s.Message != "Update available" || s.CheckedAt == 0 {
+		t.Fatalf("available: %+v", s)
+	}
 	dir, err := statusDirectory()
 	if err != nil {
 		t.Fatal(err)

@@ -71,6 +71,10 @@ func main() {
 		if err := selfupdate.StartBackground(); err != nil {
 			log.Fatal(err)
 		}
+	case "update-check-background":
+		if err := selfupdate.StartCheckIfDue(); err != nil {
+			log.Fatal(err)
+		}
 	case "update-result":
 		if result, ok := selfupdate.TakeResult(); ok {
 			if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
