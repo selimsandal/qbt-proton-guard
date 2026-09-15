@@ -92,6 +92,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         deliverQueuedNotifications()
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        timer?.invalidate()
+        timer = nil
+        statusItem.menu = nil
+        statusItem.button?.image = nil
+        NSStatusBar.system.removeStatusItem(statusItem)
+    }
+
     private func refresh() {
         let stateURL = cacheDirectory.appendingPathComponent("state.json")
         guard let data = try? Data(contentsOf: stateURL), let state = try? decoder.decode(GuardState.self, from: data) else {
@@ -369,6 +377,12 @@ if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--stop-runni
 }
 
 let app = NSApplication.shared
+signal(SIGTERM, SIG_IGN)
+let terminationSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+terminationSource.setEventHandler {
+    app.terminate(nil)
+}
+terminationSource.resume()
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()
