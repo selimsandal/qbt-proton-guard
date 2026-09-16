@@ -26,8 +26,9 @@ func TestMacOSMenuBarGroupsAndAlignsStatus(t *testing.T) {
 		"addSection(\"Actions\")",
 		"addSection(\"Updates\")",
 		"addStatusRow(label: \"Last checked\"",
-		"private func addStatusRow(label: String, value: String, valueColor: NSColor, showsProgress: Bool = false)",
+		"private func addUpdateStatus(_ value: String, showsProgress: Bool)",
 		"valueField.alignment = .right",
+		"valueField.lineBreakMode = .byTruncatingTail",
 		"progress.style = .spinning",
 		"preferencesItem.submenu = preferences",
 	} {
