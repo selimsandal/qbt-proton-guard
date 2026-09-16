@@ -150,11 +150,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         }
         addSection("Status")
-        addStatusRow(label: "qBittorrent", value: qbit)
-        addStatusRow(label: "Proton VPN", value: vpn)
-        addStatusRow(label: "Guard", value: service)
-        addStatusRow(label: "Forwarded port", value: port)
+        addStatusRow(label: "qBittorrent", value: qbit, valueColor: qbit == "Running" ? .systemGreen : .secondaryLabelColor)
+        addStatusRow(label: "Proton VPN", value: vpn, valueColor: vpn == "Connected" ? .systemGreen : .secondaryLabelColor)
+        addStatusRow(label: "Guard", value: service, valueColor: service == "Running" ? .systemGreen : (fresh ? .systemRed : .systemOrange))
+        addStatusRow(label: "Forwarded port", value: port, valueColor: port.allSatisfy(\.isNumber) ? .systemGreen : (port == "Unavailable" ? .systemRed : .secondaryLabelColor))
+        addStatusRow(label: "Last checked", value: relativeDateDescription(state.updatedAt), valueColor: fresh ? .secondaryLabelColor : .systemOrange)
         menu.addItem(.separator())
+        addSection("Actions")
         addAction("Details…", action: #selector(showDetails))
         addAction("Copy full status", action: #selector(copyStatus))
         addAction("Open guard log", action: #selector(openLog))
@@ -169,11 +171,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private func buildUnavailableMenu() {
         menu.removeAllItems()
         addSection("Status")
-        addStatusRow(label: "qBittorrent", value: "Unknown")
-        addStatusRow(label: "Proton VPN", value: "Unknown")
-        addStatusRow(label: "Guard", value: "Status unavailable")
-        addStatusRow(label: "Forwarded port", value: "Unknown")
+        addStatusRow(label: "qBittorrent", value: "Unknown", valueColor: .secondaryLabelColor)
+        addStatusRow(label: "Proton VPN", value: "Unknown", valueColor: .secondaryLabelColor)
+        addStatusRow(label: "Guard", value: "Status unavailable", valueColor: .systemOrange)
+        addStatusRow(label: "Forwarded port", value: "Unknown", valueColor: .secondaryLabelColor)
+        addStatusRow(label: "Last checked", value: "Unavailable", valueColor: .systemOrange)
         menu.addItem(.separator())
+        addSection("Actions")
         addAction("Details…", action: #selector(showDetails))
         addAction("Copy full status", action: #selector(copyStatus))
         addAction("Open guard log", action: #selector(openLog))
@@ -233,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         menu.addItem(item)
     }
 
-    private func addStatusRow(label: String, value: String) {
+    private func addStatusRow(label: String, value: String, valueColor: NSColor, showsProgress: Bool = false) {
         let width: CGFloat = 300
         let labelField = NSTextField(labelWithString: label)
         labelField.font = .menuFont(ofSize: 0)
@@ -242,17 +246,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let valueField = NSTextField(labelWithString: value)
         valueField.font = .menuFont(ofSize: 0)
-        valueField.textColor = .labelColor
+        valueField.textColor = valueColor
         valueField.alignment = .right
         valueField.lineBreakMode = .byTruncatingMiddle
-        valueField.frame = NSRect(x: 146, y: 3, width: width - 162, height: 18)
+        valueField.frame = NSRect(x: 146, y: 3, width: width - (showsProgress ? 182 : 162), height: 18)
 
         let view = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 22))
         view.addSubview(labelField)
         view.addSubview(valueField)
+        if showsProgress {
+            let progress = NSProgressIndicator(frame: NSRect(x: width - 30, y: 3, width: 16, height: 16))
+            progress.style = .spinning
+            progress.controlSize = .small
+            progress.startAnimation(nil)
+            view.addSubview(progress)
+        }
         let item = NSMenuItem()
         item.view = view
         menu.addItem(item)
+    }
+
+    private func relativeDateDescription(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 
     private func addAction(_ title: String, action: Selector) {
@@ -364,7 +381,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let busy = state?["busy"] as? Bool == true && !stale
         let message = state?["message"] as? String ?? "Not checked yet"
         addSection("Updates")
-        addStatusRow(label: "Status", value: message)
+        let statusColor: NSColor
+        if busy {
+            statusColor = .systemBlue
+        } else if message == "Up to date" {
+            statusColor = .systemGreen
+        } else if message == "Update available" {
+            statusColor = .systemOrange
+        } else if message == "Not checked yet" {
+            statusColor = .secondaryLabelColor
+        } else {
+            statusColor = .systemRed
+        }
+        addStatusRow(label: "Status", value: message, valueColor: statusColor, showsProgress: busy)
         addAction("Update…", action: #selector(openUpdater))
         menu.items.last?.isEnabled = !busy
     }

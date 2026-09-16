@@ -23,9 +23,12 @@ func TestMacOSMenuBarGroupsAndAlignsStatus(t *testing.T) {
 	source := string(MacOSMenuBarSource)
 	for _, expected := range []string{
 		"addSection(\"Status\")",
+		"addSection(\"Actions\")",
 		"addSection(\"Updates\")",
-		"private func addStatusRow(label: String, value: String)",
+		"addStatusRow(label: \"Last checked\"",
+		"private func addStatusRow(label: String, value: String, valueColor: NSColor, showsProgress: Bool = false)",
 		"valueField.alignment = .right",
+		"progress.style = .spinning",
 		"preferencesItem.submenu = preferences",
 	} {
 		if !strings.Contains(source, expected) {
